@@ -1,10 +1,29 @@
 import { OpenAI } from 'openai';
 import { logger } from '@/utils/logger';
 
-// Initialize OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Initialize OpenAI client with better error handling
+const getOpenAIClient = () => {
+  const apiKey = process.env.OPENAI_API_KEY;
+  
+  if (!apiKey) {
+    logger.error('OpenAI API key not found in environment variables');
+    throw new Error('OpenAI API key not found');
+  }
+
+  try {
+    return new OpenAI({
+      apiKey,
+      maxRetries: 3,
+      timeout: 30000,
+    });
+  } catch (error) {
+    logger.error('Failed to initialize OpenAI client:', error);
+    throw error;
+  }
+};
+
+// Get a singleton instance of the OpenAI client
+const openai = getOpenAIClient();
 
 /**
  * Sends a request to the OpenAI API and returns the response
@@ -12,7 +31,7 @@ const openai = new OpenAI({
 export const askGPT = async (
   systemPrompt: string,
   messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
-  modelName: string = 'gpt-3.5-turbo',
+  modelName: string = process.env.OPENAI_MODEL || 'gpt-3.5-turbo',
   temperature: number = 0.7,
   stream: boolean = false,
   maxTokens?: number

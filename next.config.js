@@ -3,7 +3,7 @@ const nextConfig = {
   reactStrictMode: true,
   swcMinify: true,
   images: {
-    domains: ['nvuxvoltftkkaearqrqj.supabase.co'], // Add your Supabase URL here for image hosting
+    domains: ['nvuxvoltftkkaearqrqj.supabase.co'],
   },
   webpack: (config, { dev, isServer }) => {
     // Fix for Node.js modules in browser
@@ -60,6 +60,12 @@ const nextConfig = {
     removeConsole: process.env.NODE_ENV === 'production',
   },
   poweredByHeader: false,
-}
-
-module.exports = nextConfig
+  // Add proper cache configuration
+  onDemandEntries: {
+    // period (in ms) where the server will keep pages in the buffer
+    maxInactiveAge: 25 * 1000,
+    // number of pages that should be kept simultaneously without being disposed
+    pagesBufferLength: 2,
+  },
+  generateEtags: false,
+} 

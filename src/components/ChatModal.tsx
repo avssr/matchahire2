@@ -69,6 +69,8 @@ export default function ChatModal({ role, sessionId, onClose }: ChatModalProps) 
   const fetchInitialData = useCallback(async () => {
     try {
       setIsLoading(true)
+      let retries = 0;
+      const maxRetries = 3;
       
       // Set a welcome message while loading
       setMessages([{
@@ -87,48 +89,70 @@ export default function ChatModal({ role, sessionId, onClose }: ChatModalProps) 
       
       setPersona(personaResponse.data)
       
-      // Get initial AI message
-      try {
-        const response = await RoleService.sendChatMessage(sessionId, '')
-        
-        if (!response.success) {
-          throw new Error(response.error || 'Failed to get initial message')
+      // Get initial AI message with retries
+      while (retries < maxRetries) {
+        try {
+          const response = await RoleService.sendChatMessage(sessionId, '')
+          
+          if (!response.success) {
+            throw new Error(response.error || 'Failed to get initial message')
+          }
+          
+          setMessages([{
+            id: Date.now().toString(),
+            text: response?.data?.reply || "I couldn't generate a response. Please try again.",
+            isUser: false,
+            timestamp: new Date()
+          }])
+          
+          // If successful, break out of retry loop
+          return;
+        } catch (error) {
+          logger.error(`Error fetching initial greeting (attempt ${retries + 1}/${maxRetries}):`, error)
+          retries++;
+          
+          // Only fall back to test mode if all retries fail
+          if (retries === maxRetries) {
+            logger.warn('All retries failed, falling back to test mode')
+            setUseTestMode(true)
+            
+            setMessages([{
+              id: Date.now().toString(),
+              text: `Hi, I'm ${personaResponse.data.name || 'an AI assistant'} for the ${role.title} role. Ask me anything about the position!`,
+              isUser: false,
+              isFromFallback: true,
+              timestamp: new Date()
+            }])
+          } else {
+            // Wait before retrying
+            await new Promise(resolve => setTimeout(resolve, 1000 * retries))
+          }
         }
-        
-        setMessages([{
-          id: Date.now().toString(),
-          text: response?.data?.reply || "I couldn't generate a response. Please try again.",
-          isUser: false,
-          timestamp: new Date()
-        }])
-      } catch (error) {
-        logger.error('Error fetching initial greeting', error)
-        
-        // Fall back to test mode
-        setUseTestMode(true)
-        
-        setMessages([{
-          id: Date.now().toString(),
-          text: `Hi, I'm ${personaResponse.data.name || 'an AI assistant'} for the ${role.title} role. Ask me anything about the position!`,
-          isUser: false,
-          isFromFallback: true,
-          timestamp: new Date()
-        }])
       }
     } catch (error) {
       logger.error('Failed to fetch initial data', error)
       setError(error instanceof Error ? error.message : 'Failed to start chat')
       setInitialLoadFailed(true)
       
-      // Fall back to test mode
-      setUseTestMode(true)
-      setMessages([{
-        id: Date.now().toString(),
-        text: `Hi! I'm an AI assistant for the ${role.title} position. How can I help you today?`,
-        isUser: false,
-        isFromFallback: true,
-        timestamp: new Date()
-      }])
+      // Only fall back to test mode if explicitly enabled
+      if (process.env.NEXT_PUBLIC_USE_TEST_MODE === 'true') {
+        setUseTestMode(true)
+        setMessages([{
+          id: Date.now().toString(),
+          text: `Hi! I'm an AI assistant for the ${role.title} position. How can I help you today?`,
+          isUser: false,
+          isFromFallback: true,
+          timestamp: new Date()
+        }])
+      } else {
+        setMessages([{
+          id: Date.now().toString(),
+          text: `I apologize, but I'm having trouble connecting to the AI service. Please try again in a moment.`,
+          isUser: false,
+          error: true,
+          timestamp: new Date()
+        }])
+      }
     } finally {
       setIsLoading(false)
     }
@@ -283,19 +307,16 @@ export default function ChatModal({ role, sessionId, onClose }: ChatModalProps) 
           trimmedInput
         );
         
-        if (!response.success) {
-          logger.error('Failed to get response from API service:', response.error);
-          throw new Error(response.error || 'Failed to get response');
+        if (!response.success || !response.data) {
+          throw new Error(response.error || 'Failed to get response')
         }
         
-        const botResponse: Message = {
-          id: (Date.now() + 1).toString(),
-          text: response?.data?.reply || "I'm sorry, I couldn't generate a response. Please try again.",
+        setMessages(prev => [...prev, {
+          id: Date.now().toString(),
+          text: response.data.reply || "I apologize, but I couldn't understand your message. Could you please rephrase it?",
           isUser: false,
           timestamp: new Date()
-        };
-        
-        setMessages(prev => [...prev, botResponse]);
+        }])
       }
     } catch (error) {
       logger.error('Failed to send chat message:', error);

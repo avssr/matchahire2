@@ -1,8 +1,36 @@
 import { NextResponse } from 'next/server'
-import OpenAI from 'openai'
+import { OpenAI } from 'openai'
 import { createServerSupabaseClient, fetchPersonaByRoleId, fetchRoleById } from '@/utils/supabaseClient'
 import { generateSystemPrompt } from '@/lib/gpt/generateSystemPrompt'
 import { logger } from '@/utils/logger'
+import { askGPT } from '@/lib/gpt/askGPT'
+
+// Test mode responses
+function getTestResponse(message: string, roleId: string): string {
+  const lowerMessage = message.toLowerCase()
+  
+  if (lowerMessage.includes('requirements') || lowerMessage.includes('qualifications')) {
+    return 'This role typically requires relevant experience in the field, strong communication skills, and the ability to work well in a team environment.'
+  }
+  
+  if (lowerMessage.includes('salary') || lowerMessage.includes('compensation')) {
+    return 'The salary for this position is competitive and based on experience. We offer a comprehensive benefits package including health insurance and professional development opportunities.'
+  }
+  
+  if (lowerMessage.includes('interview') || lowerMessage.includes('process')) {
+    return 'Our interview process typically includes an initial screening, technical assessment, and team interviews. We aim to make it thorough but efficient.'
+  }
+  
+  if (lowerMessage.includes('remote') || lowerMessage.includes('location')) {
+    return 'We offer flexible working arrangements with a hybrid model. Specific details can be discussed during the interview process.'
+  }
+  
+  if (lowerMessage.includes('team') || lowerMessage.includes('culture')) {
+    return 'Our team values collaboration, innovation, and continuous learning. We maintain a supportive and inclusive work environment.'
+  }
+  
+  return `I understand you're asking about ${message}. While I'm in test mode, I can tell you that this is an exciting opportunity with our company. Would you like to know more about any specific aspects of the role?`
+}
 
 // Initialize OpenAI client with better error handling
 const getOpenAIClient = () => {
@@ -14,6 +42,8 @@ const getOpenAIClient = () => {
   try {
     return new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
+      maxRetries: 3,
+      timeout: 30000,
     })
   } catch (error) {
     logger.error(`Error initializing OpenAI client: ${error}`)
@@ -28,6 +58,13 @@ const FALLBACK_MODELS = [
   "gpt-3.5-turbo-instruct"
 ]
 
+// Check if we should use test mode
+const shouldUseTestMode = (roleId: string) => {
+  return roleId === 'test-role-id' || 
+         process.env.NEXT_PUBLIC_USE_TEST_MODE === 'true' || 
+         !process.env.OPENAI_API_KEY;
+}
+
 export async function POST(request: Request) {
   try {
     logger.info('Chat API: Received request')
@@ -36,8 +73,8 @@ export async function POST(request: Request) {
     const body = await request.json()
     const { message, role_id, isInitial = false, conversation_history = [] } = body
     
-    logger.info(`Chat API: Processing ${isInitial ? 'initial' : 'follow-up'} message: ${message?.substring(0, 30) || 'initial greeting'}...`)
-    logger.info(`Chat API: Role ID: ${role_id}`)
+    logger.info(`Chat API: Processing ${isInitial ? 'initial' : 'follow-up'} message for role ${role_id}`)
+    logger.debug(`Message: ${message?.substring(0, 30)}...`)
     
     // Validate role_id
     if (!role_id) {
@@ -47,13 +84,13 @@ export async function POST(request: Request) {
       }, { status: 400 })
     }
     
-    // Test mode fallback for development
-    if (role_id === 'test-role-id' || process.env.NODE_ENV === 'development') {
-      logger.info('Chat API: Using test role, bypassing database')
+    // Test mode check
+    if (shouldUseTestMode(role_id)) {
+      logger.info('Chat API: Using test mode')
       return NextResponse.json({
         message: isInitial
-          ? "Hello! I'm a test AI assistant for development purposes. I can provide basic responses about job roles."
-          : `You asked: ${message}\n\nThis is a test response. In production, this would connect to the real GPT model.`,
+          ? `Hello! I'm an AI assistant for the role you're interested in. While we're in test mode, I can still provide helpful information about the position.`
+          : `You asked: ${message}\n\nHere's what I can tell you about that: ${getTestResponse(message, role_id)}`,
         isError: false,
         usedFallbackModel: true
       })
@@ -103,8 +140,8 @@ export async function POST(request: Request) {
       }, { status: 500 })
     }
     
-    // Generate system prompt
-    logger.info('Chat API: Creating system message for OpenAI')
+    // Generate system prompt and prepare messages
+    logger.info('Chat API: Creating system message')
     const systemPrompt = generateSystemPrompt({ persona, role, company })
     
     // Create message array for OpenAI
@@ -119,31 +156,21 @@ export async function POST(request: Request) {
     }
     
     try {
-      // Initialize OpenAI client
-      const openai = getOpenAIClient()
-      
-      // Choose model based on configuration
-      const modelName = process.env.OPENAI_MODEL || FALLBACK_MODELS[0]
-      logger.info(`Chat API: Sending request to OpenAI using ${modelName} model`)
-      
-      // Send request to OpenAI with proper typing
-      const response = await openai.chat.completions.create({
-        model: modelName,
-        messages: messages.map(msg => ({
-          role: msg.role as 'system' | 'user' | 'assistant',
-          content: msg.content
-        })),
-        temperature: 0.7,
-        max_tokens: 800,
-      })
-      
-      const content = response.choices[0].message.content
-      logger.info(`Chat API: Received response from OpenAI`)
-      logger.info(`Chat API: Response content: ${content?.substring(0, 50)}...`)
+      // Get response from OpenAI
+      const content = await askGPT(
+        systemPrompt,
+        messages,
+        process.env.OPENAI_MODEL || FALLBACK_MODELS[0],
+        0.7,
+        false,
+        800
+      )
       
       if (!content) {
         throw new Error('Empty response from OpenAI')
       }
+      
+      logger.info('Chat API: Successfully generated response')
       
       return NextResponse.json({
         message: content,
@@ -154,23 +181,20 @@ export async function POST(request: Request) {
       logger.error(`Error from OpenAI: ${error.message}`)
       
       // Try fallback models if available
-      const currentModel = process.env.OPENAI_MODEL || FALLBACK_MODELS[0]
       for (const fallbackModel of FALLBACK_MODELS) {
         try {
-          if (fallbackModel !== currentModel) {
-            const openai = getOpenAIClient()
-            const fallbackResponse = await openai.chat.completions.create({
-              model: fallbackModel,
-              messages: messages.map(msg => ({
-                role: msg.role as 'system' | 'user' | 'assistant',
-                content: msg.content
-              })),
-              temperature: 0.7,
-              max_tokens: 800,
-            })
+          if (fallbackModel !== process.env.OPENAI_MODEL) {
+            const content = await askGPT(
+              systemPrompt,
+              messages,
+              fallbackModel,
+              0.7,
+              false,
+              800
+            )
             
-            const content = fallbackResponse.choices[0].message.content
             if (content) {
+              logger.info(`Successfully generated response using fallback model ${fallbackModel}`)
               return NextResponse.json({
                 message: content,
                 isError: false,
