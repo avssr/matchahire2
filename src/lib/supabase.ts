@@ -10,35 +10,39 @@ if (!supabaseUrl || !supabaseAnonKey) {
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
 // Types for our database tables
-export type Company = {
+export interface Company {
   id: string
   name: string
-  website: string
   industry: string
-  description: string
-  values: string[]
-  culture: string
   logo_url?: string
-  tone: string
-  persona_context: {
-    vision: string
-    mission: string
-    policies: string
-    culture_summary: string
-  }
   created_at: string
 }
 
-export type Role = {
+export interface Role {
   id: string
-  company_id: string
   title: string
-  location: string
-  level: string
-  tags: string[]
   description: string
   requirements: string[]
-  responsibilities: string[]
+  location: string
+  tags: string[]
+  created_at: string
+  companies?: Company
+  personas?: {
+    id: string
+    system_prompt: string
+    conversation_mode: 'structured' | 'free'
+  }[]
+}
+
+export interface Application {
+  id: string
+  role_id: string
+  applicant_name: string
+  applicant_email: string
+  applicant_phone: string
+  cover_letter?: string
+  resume_url: string
+  status: 'pending' | 'reviewing' | 'accepted' | 'rejected'
   created_at: string
 }
 

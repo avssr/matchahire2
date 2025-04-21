@@ -1,50 +1,54 @@
 # MatchaHire v2
 
-A modern job matching platform built with Next.js and TypeScript.
-
-## Getting Started
-
-First, install the dependencies:
-
-```bash
-npm install
-# or
-yarn install
-```
-
-Then, run the development server:
-
-```bash
-npm run dev
-# or
-yarn dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+MatchaHire is a modern job board application with AI-powered features to help candidates find and apply for tech jobs. This project is built with Next.js, React, Tailwind CSS, and Supabase.
 
 ## Features
 
-- Modern UI with responsive design
-- TypeScript for type safety
-- Next.js for server-side rendering and routing
-- GitHub authentication integration
+- Browse open job roles
+- View detailed job requirements
+- Chat with AI about specific roles
+- Quick apply to positions
 
-## Project Structure
+## Recent Updates
 
-- `/pages` - Next.js pages and API routes
-- `/components` - Reusable React components
-- `/styles` - Global styles and CSS modules
-- `/public` - Static assets
-- `/types` - TypeScript type definitions
+### Role Cards Expansion
 
-## Contributing
+We've enhanced the job role cards to be more user-friendly and interactive:
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+- Added expandable cards to view detailed job requirements
+- Fixed "Chat with AI" functionality, allowing candidates to ask questions about specific roles
+- Implemented "Quick Apply" button to streamline the application process
+- Improved the overall design for better readability and user experience
+
+### Components Created/Updated
+
+- **RoleCard**: A reusable component that displays job information with buttons to expand, chat with AI, and quick apply
+- **RoleModal**: A modal component that shows detailed information when a role card is expanded
+- **ChatModal**: Handles AI conversations about specific job roles
+- **QuickApplyModal**: Provides a streamlined application form
+
+## Getting Started
+
+1. Install dependencies:
+   ```
+   npm install
+   ```
+
+2. Set up Supabase environment variables:
+   - Create a `.env.local` file in the root directory
+   - Add your Supabase URL and API key
+   ```
+   NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+   ```
+
+3. Run the development server:
+   ```
+   npm run dev
+   ```
+
+4. Open [http://localhost:3000](http://localhost:3000) in your browser
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details. 
+This project is licensed under the MIT License - see the LICENSE file for details. 

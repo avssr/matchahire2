@@ -3,11 +3,8 @@ const nextConfig = {
   reactStrictMode: true,
   swcMinify: true,
   images: {
-    domains: ['avatars.githubusercontent.com'],
-  },
-  experimental: {
-    serverActions: true,
+    domains: ['nvuxvoltftkkaearqrqj.supabase.co'], // Add your Supabase URL here for image hosting
   },
 }
 
-module.exports = nextConfig 
+module.exports = nextConfig
