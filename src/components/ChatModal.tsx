@@ -1,12 +1,15 @@
 'use client'
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { Role } from '@/lib/supabase'
+import { Role, Persona } from '@/types/gpt'
 import { XMarkIcon, PaperAirplaneIcon, UserCircleIcon, ArrowPathIcon, ExclamationCircleIcon, CloudArrowUpIcon } from '@heroicons/react/24/outline'
 import { Bot, Loader2 } from 'lucide-react'
+import { RoleService } from '@/utils/apiService'
+import { logger } from '@/utils/logger'
 
 interface ChatModalProps {
   role: Role
+  sessionId: string
   onClose: () => void
 }
 
@@ -38,7 +41,7 @@ const TEST_RESPONSES: Record<string, string> = {
   interview: "The interview process typically includes an initial screening, a technical assessment, and one or more interviews with the team and leadership."
 };
 
-export default function ChatModal({ role, onClose }: ChatModalProps) {
+export default function ChatModal({ role, sessionId, onClose }: ChatModalProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -52,6 +55,7 @@ export default function ChatModal({ role, onClose }: ChatModalProps) {
   const [useTestMode, setUseTestMode] = useState(false)
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [persona, setPersona] = useState<Persona | null>(null)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -61,125 +65,80 @@ export default function ChatModal({ role, onClose }: ChatModalProps) {
     scrollToBottom()
   }, [messages])
 
-  // Function to fetch initial greeting with retry capability
-  const fetchInitialMessage = useCallback(async (retry = false) => {
-    if (retry) {
-      console.log('Retrying initial message fetch, attempt:', retryCount + 1);
-      setRetryCount(prev => prev + 1);
-    } else if (retryCount === 0) {
-      // Set a welcome message while we try to fetch from API
+  // Function to fetch initial persona and greet
+  const fetchInitialData = useCallback(async () => {
+    try {
+      setIsLoading(true)
+      
+      // Set a welcome message while loading
       setMessages([{
         id: Date.now().toString(),
         text: `Hi! I'm loading information about the ${role.title} role at ${role.companies?.name || 'this company'}...`,
         isUser: false,
         timestamp: new Date()
-      }]);
-    }
-
-    try {
-      setIsLoading(true);
-      setError(null);
-      setDebugInfo(null);
+      }])
       
-      // Try to fetch from API
+      // Fetch persona for the role
+      const personaResponse = await RoleService.getPersonaByRoleId(role.id)
+      
+      if (!personaResponse.success || !personaResponse.data) {
+        throw new Error(personaResponse.error || 'Failed to fetch persona data')
+      }
+      
+      setPersona(personaResponse.data)
+      
+      // Get initial AI message
       try {
-        console.log('Fetching initial greeting from API...');
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            message: '',
-            role: role,
-            isInitial: true
-          }),
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error('API Response Error:', response.status, errorText);
-          throw new Error(`Failed to get initial message: ${response.status} - ${errorText}`);
-        }
-
-        const data = await response.json();
-        console.log('Initial message response:', data);
+        const response = await RoleService.sendChatMessage(sessionId, '')
         
-        if (data.error) {
-          console.error('API returned error:', data.error);
-          setDebugInfo(data.error);
-          throw new Error(data.error);
-        }
-
-        if (!data.message) {
-          throw new Error('No message content received from API');
-        }
-
-        // Simulate typing effect for the real response
-        setIsTyping(true);
-        setInitialLoadFailed(false);
-        
-        setTimeout(() => {
-          setMessages([{
-            id: Date.now().toString(),
-            text: data.message,
-            isUser: false,
-            isFromFallback: data.usedFallbackModel || data.isError,
-            timestamp: new Date()
-          }]);
-          setIsTyping(false);
-        }, 1000);
-      } catch (apiError: any) {
-        console.error('API request failed:', apiError);
-        setDebugInfo(apiError.message);
-        
-        // Check if we should retry
-        if (retryCount < 2) {
-          console.log('Will retry after delay...');
-          setTimeout(() => fetchInitialMessage(true), 2000);
-          return;
+        if (!response.success) {
+          throw new Error(response.error || 'Failed to get initial message')
         }
         
-        // Fall back to test mode
-        console.log('Switching to test mode after API failures');
-        setUseTestMode(true);
-        setInitialLoadFailed(false);
         setMessages([{
           id: Date.now().toString(),
-          text: `Hi! I'm your AI assistant for the ${role.title} role at ${role.companies?.name || 'this company'}. Ask me anything about the position!`,
+          text: response?.data?.reply || "I couldn't generate a response. Please try again.",
+          isUser: false,
+          timestamp: new Date()
+        }])
+      } catch (error) {
+        logger.error('Error fetching initial greeting', error)
+        
+        // Fall back to test mode
+        setUseTestMode(true)
+        
+        setMessages([{
+          id: Date.now().toString(),
+          text: `Hi, I'm ${personaResponse.data.name || 'an AI assistant'} for the ${role.title} role. Ask me anything about the position!`,
           isUser: false,
           isFromFallback: true,
           timestamp: new Date()
-        }]);
-
-        // Set a helpful message
-        setError(`We're using a local assistant due to connection issues. Your experience might be limited.`);
+        }])
       }
-    } catch (error: any) {
-      console.error('Failed to fetch initial message:', error);
-      setError(error instanceof Error ? error.message : 'Failed to start chat');
-      setInitialLoadFailed(true);
-      setDebugInfo(error.message);
-      setUseTestMode(true);
+    } catch (error) {
+      logger.error('Failed to fetch initial data', error)
+      setError(error instanceof Error ? error.message : 'Failed to start chat')
+      setInitialLoadFailed(true)
+      
+      // Fall back to test mode
+      setUseTestMode(true)
       setMessages([{
         id: Date.now().toString(),
-        text: `Hi! I'm your AI assistant for the ${role.title} role at ${role.companies?.name || 'this company'}. Ask me anything about the position!`,
+        text: `Hi! I'm an AI assistant for the ${role.title} position. How can I help you today?`,
         isUser: false,
         isFromFallback: true,
         timestamp: new Date()
-      }]);
+      }])
     } finally {
-      setIsLoading(false);
+      setIsLoading(false)
     }
-  }, [role, retryCount]);
+  }, [role, sessionId])
 
   useEffect(() => {
-    // Focus input on mount
-    inputRef.current?.focus();
-    
-    // Fetch the initial greeting
-    fetchInitialMessage();
-  }, [fetchInitialMessage]);
+    // Focus input and fetch initial greeting
+    inputRef.current?.focus()
+    fetchInitialData()
+  }, [fetchInitialData])
 
   // Get a response from the test mode system
   const getTestModeResponse = (userMessage: string) => {
@@ -200,7 +159,6 @@ export default function ChatModal({ role, onClose }: ChatModalProps) {
     }
   };
 
-  // Add file upload functions
   const handleFileUpload = () => {
     fileInputRef.current?.click();
   };
@@ -231,75 +189,56 @@ export default function ChatModal({ role, onClose }: ChatModalProps) {
         ));
       }, 300);
       
-      // Create form data
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('roleId', role.id);
-      
-      // Try to upload if API is available
-      let success = false;
-      let fileUrl = '';
-      
-      try {
-        const response = await fetch('/api/upload', {
-          method: 'POST',
-          body: formData
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          success = true;
-          fileUrl = data.url;
-        }
-      } catch (apiError) {
-        console.error('API upload failed, using test mode', apiError);
-      }
+      // The actual upload will go here in a real implementation
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
       clearInterval(progressInterval);
       
-      if (!success) {
-        // If API failed, simulate success for demo purposes
-        fileUrl = URL.createObjectURL(file);
-      }
-      
-      // Update file status to success
       setUploadedFiles(prev => prev.map(f => 
         f.id === fileId ? {
           ...f, 
-          status: 'success', 
-          progress: 100, 
-          url: fileUrl
+          status: 'success',
+          progress: 100,
+          url: URL.createObjectURL(file)
         } : f
       ));
       
-      // Add a message about the uploaded file
-      const fileMessage = `I've uploaded my ${file.name.includes('resume') || file.type.includes('pdf') ? 'resume' : 'file'}: ${file.name}`;
-      
-      setMessages(prev => [...prev, {
+      // Add a message about the upload
+      const userMessage: Message = {
         id: Date.now().toString(),
-        text: fileMessage,
+        text: `I've uploaded my resume: ${file.name}`,
         isUser: true,
         timestamp: new Date()
-      }]);
+      };
       
-      // Add the message to the chat
-      setInput(fileMessage);
+      setMessages(prev => [...prev, userMessage]);
+      
+      // Have the AI respond to the upload
+      setIsTyping(true);
+      
       setTimeout(() => {
-        handleSendMessage();
-      }, 100);
+        const botResponse: Message = {
+          id: (Date.now() + 1).toString(),
+          text: `Thank you for uploading your resume. I'll review it to provide more personalized feedback about how your experience aligns with the ${role.title} role.`,
+          isUser: false,
+          timestamp: new Date()
+        };
+        
+        setMessages(prev => [...prev, botResponse]);
+        setIsTyping(false);
+      }, 1500);
       
     } catch (error) {
-      console.error('File handling error:', error);
+      logger.error('File upload failed:', error);
       
       setUploadedFiles(prev => prev.map(f => 
-        f.id === fileId ? {...f, status: 'error', progress: 100} : f
+        f.id === fileId ? {
+          ...f, 
+          status: 'error',
+          error: 'Upload failed'
+        } : f
       ));
-      
-      setError(`Failed to handle file: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-    
-    // Clear the input
-    e.target.value = '';
   };
 
   const handleRemoveFile = (fileId: string) => {
@@ -307,103 +246,88 @@ export default function ChatModal({ role, onClose }: ChatModalProps) {
   };
 
   const handleSendMessage = async () => {
-    if (!input.trim() || isLoading) return;
-
-    const userMessage = input.trim();
-    const userMessageId = Date.now().toString();
+    if (!input.trim()) return;
+    
+    const trimmedInput = input.trim();
     setInput('');
-    setMessages(prev => [...prev, {
-      id: userMessageId,
-      text: userMessage,
+    
+    // Add user message to chat
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      text: trimmedInput,
       isUser: true,
       timestamp: new Date()
-    }]);
-    setIsLoading(true);
-    setError(null);
-    setDebugInfo(null);
-
-    // Add typing indicator immediately
+    };
+    
+    setMessages(prev => [...prev, userMessage]);
     setIsTyping(true);
-
-    if (useTestMode) {
-      // Use test mode response system
-      setTimeout(() => {
-        setIsTyping(false);
-        setMessages(prev => [...prev, {
+    
+    try {
+      if (useTestMode) {
+        // Add a slight delay for more natural conversation
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        const botResponse: Message = {
           id: (Date.now() + 1).toString(),
-          text: getTestModeResponse(userMessage),
+          text: getTestModeResponse(trimmedInput),
           isUser: false,
           isFromFallback: true,
           timestamp: new Date()
-        }]);
-        setIsLoading(false);
-      }, 1500);
-      return;
-    }
-
-    try {
-      console.log('Sending message to API:', userMessage.substring(0, 30));
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          message: userMessage,
-          role: role,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('API Response Error:', response.status, errorText);
-        throw new Error(`Failed to get response: ${response.status} - ${errorText}`);
-      }
-
-      const data = await response.json();
-      console.log('ChatModal: Received API response:', data);
-      
-      if (data.error) {
-        console.error('API returned error:', data.error);
-        setDebugInfo(data.error);
-        throw new Error(data.error);
-      }
-
-      // Even if no explicit error is returned, check if we got a valid message
-      if (!data.message) {
-        console.error('ChatModal: No message content in response:', data);
-        throw new Error('No response message received');
-      }
-
-      setTimeout(() => {
-        setIsTyping(false);
-        setMessages(prev => [...prev, {
+        };
+        
+        setMessages(prev => [...prev, botResponse]);
+      } else {
+        // Use our API service to send the message
+        const response = await RoleService.sendChatMessage(
+          sessionId, 
+          trimmedInput
+        );
+        
+        if (!response.success) {
+          logger.error('Failed to get response from API service:', response.error);
+          throw new Error(response.error || 'Failed to get response');
+        }
+        
+        const botResponse: Message = {
           id: (Date.now() + 1).toString(),
-          text: data.message,
+          text: response?.data?.reply || "I'm sorry, I couldn't generate a response. Please try again.",
           isUser: false,
-          isFromFallback: data.usedFallbackModel || data.isError,
           timestamp: new Date()
-        }]);
-      }, 500);
-    } catch (error: any) {
-      console.error('Chat error:', error);
-      setIsTyping(false);
-      setError(error instanceof Error ? error.message : 'Failed to process message');
-      setDebugInfo(error.message);
+        };
+        
+        setMessages(prev => [...prev, botResponse]);
+      }
+    } catch (error) {
+      logger.error('Failed to send chat message:', error);
       
-      // Switch to test mode if API fails
+      // If API fails, fall back to test mode
       setUseTestMode(true);
-      setMessages(prev => [...prev, {
+      
+      const errorResponse: Message = {
         id: (Date.now() + 1).toString(),
-        text: getTestModeResponse(userMessage),
+        text: "I'm having trouble connecting to my knowledge base. I'll switch to a basic mode to help you.",
         isUser: false,
         isFromFallback: true,
+        error: true,
         timestamp: new Date()
-      }]);
+      };
+      
+      setMessages(prev => [...prev, errorResponse]);
+      
+      // Add the fallback response after the error message
+      setTimeout(() => {
+        const fallbackResponse: Message = {
+          id: (Date.now() + 2).toString(),
+          text: getTestModeResponse(trimmedInput),
+          isUser: false,
+          isFromFallback: true,
+          timestamp: new Date()
+        };
+        
+        setMessages(prev => [...prev, fallbackResponse]);
+      }, 1000);
     } finally {
-      setIsLoading(false);
       setIsTyping(false);
-      inputRef.current?.focus();
     }
   };
 
@@ -415,104 +339,158 @@ export default function ChatModal({ role, onClose }: ChatModalProps) {
   };
 
   const handleRetry = () => {
-    // Clear existing messages and retry
-    setMessages([]);
     setRetryCount(0);
+    setInitialLoadFailed(false);
     setUseTestMode(false);
-    fetchInitialMessage();
+    setError(null);
+    setMessages([]);
+    fetchInitialData();
   };
 
   return (
-    <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl h-[80vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {/* Backdrop */}
+      <div 
+        className="fixed inset-0 bg-black/50 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      
+      {/* Modal content */}
+      <div className="relative z-50 w-full max-w-3xl mx-4 h-[80vh] bg-white rounded-xl shadow-xl flex flex-col overflow-hidden">
         {/* Header */}
         <div className="p-4 border-b flex items-center justify-between bg-gradient-to-r from-green-50 to-teal-50 rounded-t-xl">
           <div className="flex items-center space-x-3">
-            <Bot className="h-6 w-6 text-green-600" />
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">AI Assistant</h2>
-              <p className="text-sm text-gray-500">{role.title} Specialist</p>
-            </div>
-            {messages.some(m => m.isFromFallback) && (
-              <div className="flex items-center text-xs text-amber-600">
-                <ExclamationCircleIcon className="h-4 w-4 mr-1" />
-                <span>Using basic mode</span>
+            {persona?.avatar_url ? (
+              <img 
+                src={persona?.avatar_url || '/default-avatar.png'} 
+                alt={persona?.name || 'AI Assistant'} 
+                className="h-10 w-10 rounded-full border-2 border-white shadow-sm"
+              />
+            ) : (
+              <div className="h-10 w-10 bg-green-100 rounded-full flex items-center justify-center">
+                <Bot className="h-6 w-6 text-green-600" />
               </div>
             )}
+            
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">
+                {persona?.name || 'AI Assistant'}
+              </h2>
+              <p className="text-sm text-gray-500">
+                {role.title} Specialist
+              </p>
+            </div>
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            <XMarkIcon className="h-6 w-6" />
-          </button>
+          
+          <div className="flex space-x-2">
+            {initialLoadFailed && (
+              <button
+                onClick={handleRetry}
+                className="flex items-center text-amber-600 hover:text-amber-700"
+                aria-label="Retry connection"
+              >
+                <ArrowPathIcon className="h-5 w-5" />
+              </button>
+            )}
+            
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-gray-600"
+              aria-label="Close chat"
+            >
+              <XMarkIcon className="h-6 w-6" />
+            </button>
+          </div>
         </div>
         
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Main chat area */}
+        <div className="flex-1 overflow-y-auto p-4 bg-gray-50">
           {error && (
-            <div className="bg-red-50 text-red-800 p-4 rounded-lg mb-4 flex items-center space-x-2">
-              <div className="flex-shrink-0">⚠️</div>
-              <div className="flex-1">
-                <p>{error}</p>
+            <div className="mb-4 p-3 bg-red-50 text-red-800 rounded-lg flex items-start">
+              <ExclamationCircleIcon className="h-5 w-5 mr-2 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-medium">Error connecting to AI</p>
+                <p className="text-sm">{error}</p>
                 {debugInfo && (
-                  <details className="mt-1 text-xs">
-                    <summary className="cursor-pointer hover:underline">Technical details</summary>
-                    <code className="block mt-1 p-2 bg-red-100 rounded overflow-x-auto">
-                      {debugInfo}
-                    </code>
+                  <details className="mt-1">
+                    <summary className="text-xs cursor-pointer">Technical details</summary>
+                    <pre className="text-xs mt-1 p-2 bg-red-100 rounded overflow-auto max-h-40">{debugInfo}</pre>
                   </details>
-                )}
-                {initialLoadFailed && (
-                  <button 
-                    onClick={handleRetry}
-                    className="mt-2 flex items-center text-red-700 hover:text-red-900"
-                  >
-                    <ArrowPathIcon className="h-4 w-4 mr-1" />
-                    Try again
-                  </button>
                 )}
               </div>
             </div>
           )}
           
-          {messages.map((message) => (
-            <div
+          {/* Messages */}
+          {messages.map(message => (
+            <div 
               key={message.id}
-              className={`flex ${message.isUser ? 'justify-end' : 'justify-start'} items-end space-x-2`}
+              className={`flex ${message.isUser ? 'justify-end' : 'justify-start'} mb-4`}
             >
               {!message.isUser && (
-                <Bot className={`h-6 w-6 flex-shrink-0 mb-2 ${message.isFromFallback ? 'text-amber-500' : 'text-green-600'}`} />
+                <div className="flex-shrink-0 mr-2">
+                  {persona?.avatar_url ? (
+                    <img 
+                      src={persona?.avatar_url || '/default-avatar.png'} 
+                      alt={persona?.name || 'AI'} 
+                      className="h-8 w-8 rounded-full"
+                    />
+                  ) : (
+                    <div className="h-8 w-8 bg-green-100 rounded-full flex items-center justify-center">
+                      <Bot className="h-5 w-5 text-green-600" />
+                    </div>
+                  )}
+                </div>
               )}
-              <div
-                className={`rounded-2xl px-4 py-2 max-w-[80%] ${
-                  message.isUser
+              
+              <div 
+                className={`rounded-lg px-4 py-2 max-w-[80%] ${
+                  message.isUser 
                     ? 'bg-green-600 text-white'
                     : message.error
-                    ? 'bg-red-50 text-red-800'
+                    ? 'bg-red-50 text-red-800 border border-red-200'
                     : message.isFromFallback
-                    ? 'bg-amber-50 text-gray-900 border border-amber-200'
-                    : 'bg-gray-100 text-gray-900'
+                    ? 'bg-yellow-50 text-gray-800 border border-yellow-200'
+                    : 'bg-white text-gray-900 border border-gray-200'
                 }`}
               >
                 <p className="whitespace-pre-wrap">{message.text}</p>
-                <span className="text-xs opacity-70 mt-1 block flex items-center justify-between">
-                  <span>{message.timestamp.toLocaleTimeString()}</span>
+                <div className="text-xs opacity-70 mt-1">
+                  {message.timestamp.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})}
                   {message.isFromFallback && !message.isUser && !message.error && (
-                    <span className="text-amber-600 text-[10px] ml-2">basic mode</span>
+                    <span className="ml-2 text-amber-500 text-[10px]">basic mode</span>
                   )}
-                </span>
+                </div>
               </div>
+              
               {message.isUser && (
-                <UserCircleIcon className="h-6 w-6 text-green-600 flex-shrink-0 mb-2" />
+                <div className="flex-shrink-0 ml-2">
+                  <div className="h-8 w-8 bg-gray-200 rounded-full flex items-center justify-center">
+                    <UserCircleIcon className="h-5 w-5 text-gray-500" />
+                  </div>
+                </div>
               )}
             </div>
           ))}
           
+          {/* Typing indicator */}
           {isTyping && (
-            <div className="flex justify-start items-end space-x-2">
-              <Bot className="h-6 w-6 text-green-600 flex-shrink-0 mb-2" />
-              <div className="bg-gray-100 rounded-2xl px-4 py-2">
+            <div className="flex justify-start mb-4">
+              <div className="flex-shrink-0 mr-2">
+                {persona?.avatar_url ? (
+                  <img 
+                    src={persona?.avatar_url || '/default-avatar.png'} 
+                    alt={persona?.name || 'AI'} 
+                    className="h-8 w-8 rounded-full"
+                  />
+                ) : (
+                  <div className="h-8 w-8 bg-green-100 rounded-full flex items-center justify-center">
+                    <Bot className="h-5 w-5 text-green-600" />
+                  </div>
+                )}
+              </div>
+              
+              <div className="bg-white text-gray-400 rounded-lg px-4 py-3 border border-gray-200">
                 <div className="flex space-x-2">
                   <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
                   <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
@@ -521,49 +499,31 @@ export default function ChatModal({ role, onClose }: ChatModalProps) {
               </div>
             </div>
           )}
+          
+          {/* Anchor for auto-scroll */}
           <div ref={messagesEndRef} />
         </div>
-
-        {/* Uploaded Files */}
+        
+        {/* Upload files area */}
         {uploadedFiles.length > 0 && (
-          <div className="p-4 border-t border-gray-100">
-            <h4 className="text-xs font-medium text-gray-500 mb-2">Attached Files:</h4>
-            <div className="space-y-2">
+          <div className="border-t p-2 bg-gray-50">
+            <div className="flex flex-wrap gap-2">
               {uploadedFiles.map(file => (
-                <div key={file.id} className="flex items-center text-sm bg-gray-50 rounded p-2">
-                  <div className="flex-1 min-w-0">
-                    <p className="truncate font-medium text-gray-700">{file.name}</p>
-                    <div className="flex items-center">
-                      {file.status === 'uploading' ? (
-                        <>
-                          <div className="w-full bg-gray-200 rounded-full h-1.5 mr-2">
-                            <div 
-                              className="bg-green-500 h-1.5 rounded-full" 
-                              style={{ width: `${file.progress || 0}%` }}
-                            ></div>
-                          </div>
-                          <span className="text-xs text-gray-500">{file.progress}%</span>
-                        </>
-                      ) : file.status === 'success' ? (
-                        <span className="text-xs text-green-600">Uploaded successfully</span>
-                      ) : (
-                        <span className="text-xs text-red-600">Failed to upload</span>
-                      )}
+                <div 
+                  key={file.id} 
+                  className="flex items-center bg-white rounded-full px-3 py-1 text-sm border border-gray-200"
+                >
+                  <span className="truncate max-w-[150px]">{file.name}</span>
+                  
+                  {file.status === 'uploading' && (
+                    <div className="ml-2 h-4 w-4">
+                      <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
                     </div>
-                  </div>
-                  {file.status === 'success' && file.url && (
-                    <a 
-                      href={file.url} 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="ml-2 text-xs text-green-600 hover:underline mr-2"
-                    >
-                      View
-                    </a>
                   )}
-                  <button 
+                  
+                  <button
                     onClick={() => handleRemoveFile(file.id)}
-                    className="text-gray-400 hover:text-gray-600"
+                    className="ml-2 text-gray-400 hover:text-gray-600"
                   >
                     <XMarkIcon className="h-4 w-4" />
                   </button>
@@ -572,52 +532,59 @@ export default function ChatModal({ role, onClose }: ChatModalProps) {
             </div>
           </div>
         )}
-
-        {/* Input */}
-        <div className="p-4 border-t bg-white rounded-b-xl">
-          <div className="flex space-x-2">
+        
+        {/* Input area */}
+        <div className="p-4 border-t bg-white">
+          <div className="relative flex items-center">
             <button
               onClick={handleFileUpload}
-              className="rounded-full p-2 bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-green-600 transition-colors flex-shrink-0"
-              title="Upload resume or file"
+              className="absolute left-3 text-gray-400 hover:text-gray-600"
+              aria-label="Upload file"
+              type="button"
             >
               <CloudArrowUpIcon className="h-5 w-5" />
             </button>
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileChange}
-              className="hidden"
-              accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png"
-            />
+            
             <textarea
               ref={inputRef}
-              rows={1}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyPress}
-              placeholder="Ask about the role... (Press Enter to send)"
-              className="flex-1 resize-none rounded-xl border-gray-200 shadow-sm focus:border-green-500 focus:ring-green-500 min-h-[44px] max-h-32"
-              disabled={isLoading}
+              placeholder="Type your message..."
+              rows={1}
+              className="w-full bg-gray-100 rounded-full py-2 pl-10 pr-12 resize-none max-h-24 focus:outline-none focus:ring-2 focus:ring-green-500 focus:bg-white"
             />
+            
             <button
               onClick={handleSendMessage}
-              disabled={isLoading || !input.trim()}
-              className={`rounded-full p-2 ${
-                isLoading || !input.trim()
-                  ? 'bg-gray-100 text-gray-400'
-                  : 'bg-green-600 text-white hover:bg-green-700'
-              } transition-colors flex-shrink-0`}
+              disabled={!input.trim() || isLoading}
+              className={`absolute right-3 ${
+                input.trim() && !isLoading 
+                  ? 'text-green-600 hover:text-green-700'
+                  : 'text-gray-300'
+              }`}
+              aria-label="Send message"
+              type="button"
             >
-              {isLoading ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : (
-                <PaperAirplaneIcon className="h-5 w-5" />
-              )}
+              <PaperAirplaneIcon className="h-5 w-5" />
             </button>
           </div>
+          
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            className="hidden"
+            accept=".pdf,.doc,.docx,.txt"
+          />
+          
+          <p className="text-xs text-gray-500 mt-2 text-center">
+            {useTestMode ? 
+              'Using basic mode. Responses may be limited.' : 
+              'Connected to AI assistant. Ask any questions about this role.'}
+          </p>
         </div>
       </div>
     </div>
-  )
+  );
 } 

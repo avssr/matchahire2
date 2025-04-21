@@ -1,89 +1,29 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
-import type { Role } from '@/lib/supabase'
 import RoleModal from '@/components/RoleModal'
 import ChatModal from '@/components/ChatModal'
 import QuickApplyModal from '@/components/QuickApplyModal'
-import { Briefcase, MapPin, Building2, Calendar } from 'lucide-react'
+import { Briefcase } from 'lucide-react'
 import RoleCard from '@/components/RoleCard'
+import { Role } from '@/types/gpt'
+import { RoleService } from '@/utils/apiService'
+import { logger } from '@/utils/logger'
 
-// Sample role data for testing when Supabase is not available
-const SAMPLE_ROLES: Role[] = [
-  {
-    id: '1',
-    title: 'Frontend Developer',
-    description: 'We are looking for a skilled Frontend Developer to join our engineering team. You will build user-facing features, implement responsive designs, and work closely with designers and backend developers.',
-    requirements: [
-      'Proficiency in HTML, CSS, and JavaScript',
-      '3+ years of experience with React.js',
-      'Experience with responsive design and cross-browser compatibility',
-      'Understanding of REST APIs and how to integrate them',
-      'Familiarity with modern frontend build pipelines and tools'
-    ],
-    location: 'San Francisco, CA (Remote Friendly)',
-    tags: ['React', 'JavaScript', 'TypeScript', 'UI/UX', 'Redux'],
-    created_at: new Date().toISOString(),
-    companies: {
-      id: '1',
-      name: 'TechInnovate',
-      industry: 'Technology',
-      created_at: new Date().toISOString()
-    }
-  },
-  {
-    id: '2',
-    title: 'Backend Engineer',
-    description: 'Join our backend team to design and implement scalable APIs, microservices, and infrastructure. You will work on our core platform that powers all our client-facing applications.',
-    requirements: [
-      'Strong experience with Node.js or Python',
-      'Knowledge of database design and optimization',
-      'Experience with cloud infrastructure (AWS, GCP, or Azure)',
-      'Understanding of API design principles',
-      'Experience with containerization technologies (Docker, Kubernetes)'
-    ],
-    location: 'New York, NY (Hybrid)',
-    tags: ['Node.js', 'Python', 'AWS', 'Microservices', 'PostgreSQL'],
-    created_at: new Date().toISOString(),
-    companies: {
-      id: '2',
-      name: 'DataStack',
-      industry: 'Data Infrastructure',
-      created_at: new Date().toISOString()
-    }
-  },
-  {
-    id: '3',
-    title: 'UX/UI Designer',
-    description: 'As a UX/UI Designer, you will create intuitive and engaging user experiences for our products. You will collaborate with product managers and developers to deliver designs that meet user needs and business goals.',
-    requirements: [
-      'Portfolio demonstrating strong UI/UX design skills',
-      'Proficiency in design tools such as Figma, Sketch, or Adobe XD',
-      'Experience conducting user research and usability testing',
-      'Ability to translate user needs into design solutions',
-      'Understanding of design systems and component libraries'
-    ],
-    location: 'Seattle, WA (Remote)',
-    tags: ['UI', 'UX', 'Figma', 'User Research', 'Design Systems'],
-    created_at: new Date().toISOString(),
-    companies: {
-      id: '3',
-      name: 'CreateUI',
-      industry: 'Design Agency',
-      created_at: new Date().toISOString()
-    }
-  }
-];
+// Type augmentation to support sessionId in chat and requirements array conversion
+interface RoleWithChatSession extends Role {
+  chatSessionId?: string;
+  // Convert string requirements to array for RoleModal
+  requirementsArray?: string[];
+}
 
 export default function RolesPage() {
-  const [selectedRole, setSelectedRole] = useState<Role | null>(null)
-  const [chatRole, setChatRole] = useState<Role | null>(null)
-  const [applyRole, setApplyRole] = useState<Role | null>(null)
-  const [roles, setRoles] = useState<Role[]>([])
+  const [selectedRole, setSelectedRole] = useState<RoleWithChatSession | null>(null)
+  const [chatRole, setChatRole] = useState<RoleWithChatSession | null>(null)
+  const [applyRole, setApplyRole] = useState<RoleWithChatSession | null>(null)
+  const [roles, setRoles] = useState<RoleWithChatSession[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [useTestData, setUseTestData] = useState(false)
 
   // Fetch roles on component mount
   useEffect(() => {
@@ -91,48 +31,54 @@ export default function RolesPage() {
       try {
         setLoading(true)
         setError(null)
-        const supabase = createBrowserClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL!,
-          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-        )
         
-        const { data, error: supabaseError } = await supabase
-          .from('roles')
-          .select(`
-            *,
-            companies (
-              name,
-              industry,
-              logo_url
-            )
-          `)
+        const response = await RoleService.getRoles()
         
-        if (supabaseError) throw new Error(supabaseError.message)
-        
-        if (!data || data.length === 0) {
-          console.log('No roles found in Supabase, using sample data');
-          setUseTestData(true);
-          setRoles(SAMPLE_ROLES);
-        } else {
-          setRoles(data);
+        if (!response.success) {
+          throw new Error(response.error || 'Failed to fetch roles')
         }
+        
+        // Process the roles to ensure requirements is an array for components
+        const processedRoles = response.data?.map(role => ({
+          ...role,
+          // Convert string requirements to array if needed
+          requirementsArray: typeof role.requirements === 'string' 
+            ? role.requirements.split(/\n+/).filter(Boolean)
+            : (Array.isArray(role.requirements) ? role.requirements : [])
+        })) || []
+        
+        setRoles(processedRoles)
       } catch (err) {
-        console.error('Error fetching roles:', err);
-        setError(err instanceof Error ? err.message : 'Failed to fetch roles');
-        setUseTestData(true);
-        setRoles(SAMPLE_ROLES);
+        logger.error('Error fetching roles:', err)
+        setError(err instanceof Error ? err.message : 'Failed to fetch roles')
       } finally {
         setLoading(false)
       }
     }
+    
     fetchRoles()
   }, [])
 
-  const handleChatWithAI = (role: Role) => {
-    setChatRole(role)
+  const handleChatWithAI = async (role: RoleWithChatSession) => {
+    try {
+      const response = await RoleService.startChatSession(role.id)
+      
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to start chat session')
+      }
+      
+      // Store sessionId with role for the chat modal
+      setChatRole({
+        ...role,
+        chatSessionId: response.data?.sessionId
+      })
+    } catch (err) {
+      logger.error('Error starting chat session:', err)
+      alert('Could not start chat session. Please try again.')
+    }
   }
 
-  const handleQuickApply = (role: Role) => {
+  const handleQuickApply = (role: RoleWithChatSession) => {
     setApplyRole(role)
   }
 
@@ -144,23 +90,9 @@ export default function RolesPage() {
   }
 
   // Handle role card click
-  const handleRoleClick = (role: Role) => {
+  const handleRoleClick = (role: RoleWithChatSession) => {
     closeAllModals()
     setSelectedRole(role)
-  }
-
-  // Handle Chat with AI button click
-  const handleChatClick = (e: React.MouseEvent, role: Role) => {
-    e.stopPropagation()
-    closeAllModals()
-    setChatRole(role)
-  }
-
-  // Handle Quick Apply button click
-  const handleApplyClick = (e: React.MouseEvent, role: Role) => {
-    e.stopPropagation()
-    closeAllModals()
-    setApplyRole(role)
   }
 
   if (loading) {
@@ -192,7 +124,7 @@ export default function RolesPage() {
     )
   }
 
-  if (error && !useTestData) {
+  if (error) {
     return (
       <main className="min-h-screen bg-gradient-to-b from-white to-green-50 py-12">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
@@ -225,11 +157,6 @@ export default function RolesPage() {
           <p className="mt-2 text-lg leading-8 text-gray-600">
             Discover opportunities that match your skills and aspirations.
           </p>
-          {useTestData && (
-            <div className="mt-2 inline-flex items-center rounded-md bg-yellow-50 px-2 py-1 text-xs font-medium text-yellow-800 ring-1 ring-inset ring-yellow-600/20">
-              Using demo data
-            </div>
-          )}
         </div>
 
         {roles.length === 0 ? (
@@ -243,10 +170,10 @@ export default function RolesPage() {
             {roles.map((role) => (
               <RoleCard
                 key={role.id}
-                role={role}
-                onViewDetails={handleRoleClick}
-                onChatWithAI={handleChatWithAI}
-                onQuickApply={handleQuickApply}
+                role={role as any /* Type cast to make it compatible */}
+                onViewDetails={handleRoleClick as any}
+                onChatWithAI={handleChatWithAI as any}
+                onQuickApply={handleQuickApply as any}
               />
             ))}
           </div>
@@ -259,26 +186,29 @@ export default function RolesPage() {
             title: selectedRole.title,
             company: selectedRole.companies?.name || '',
             description: selectedRole.description,
-            requirements: selectedRole.requirements,
-            skills: selectedRole.tags,
+            requirements: selectedRole.requirementsArray || [],
+            skills: selectedRole.tags || selectedRole.skills || [],
             location: selectedRole.location,
-            salary: 'Competitive' // TODO: Add salary to role data
+            salary: selectedRole.salary || 'Competitive',
+            companyDescription: selectedRole.companies?.description || '',
+            companyLogo: selectedRole.companies?.logo_url || '',
           }}
-          onClose={() => setSelectedRole(null)}
+          onClose={closeAllModals}
         />
       )}
 
       {chatRole && (
         <ChatModal
-          role={chatRole}
-          onClose={() => setChatRole(null)}
+          role={chatRole as any /* Type cast to make it compatible */}
+          sessionId={chatRole.chatSessionId || ''}
+          onClose={closeAllModals}
         />
       )}
 
       {applyRole && (
         <QuickApplyModal
-          role={applyRole}
-          onClose={() => setApplyRole(null)}
+          role={applyRole as any /* Type cast to make it compatible */}
+          onClose={closeAllModals}
         />
       )}
     </main>

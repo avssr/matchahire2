@@ -7,7 +7,7 @@ import {
   ChatBubbleLeftRightIcon, 
   PaperAirplaneIcon
 } from '@heroicons/react/24/outline'
-import type { Role } from '@/lib/supabase'
+import type { Role } from '@/types/gpt'
 
 interface RoleCardProps {
   role: Role
@@ -23,6 +23,25 @@ export default function RoleCard({ role, onViewDetails, onChatWithAI, onQuickApp
     day: 'numeric',
     year: 'numeric'
   })
+
+  // Handle button clicks with explicit event stopping
+  const handleChatClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onChatWithAI(role);
+  }
+
+  const handleApplyClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onQuickApply(role);
+  }
+
+  const handleDetailsClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onViewDetails(role);
+  }
 
   return (
     <div 
@@ -66,10 +85,7 @@ export default function RoleCard({ role, onViewDetails, onChatWithAI, onQuickApp
       
       <div className="flex justify-between mt-4 pt-4 border-t border-gray-100">
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onViewDetails(role);
-          }}
+          onClick={handleDetailsClick}
           className="inline-flex items-center text-sm font-medium text-green-600 hover:text-green-700"
         >
           <ArrowsPointingOutIcon className="h-4 w-4 mr-1" />
@@ -78,10 +94,7 @@ export default function RoleCard({ role, onViewDetails, onChatWithAI, onQuickApp
         
         <div className="flex space-x-2">
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onChatWithAI(role);
-            }}
+            onClick={handleChatClick}
             className="bg-green-50 text-green-600 px-3 py-1 rounded-md text-sm font-medium hover:bg-green-100 flex items-center"
           >
             <ChatBubbleLeftRightIcon className="h-4 w-4 mr-1" />
@@ -89,10 +102,7 @@ export default function RoleCard({ role, onViewDetails, onChatWithAI, onQuickApp
           </button>
           
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onQuickApply(role);
-            }}
+            onClick={handleApplyClick}
             className="bg-green-600 text-white px-3 py-1 rounded-md text-sm font-medium hover:bg-green-700 flex items-center"
           >
             <PaperAirplaneIcon className="h-4 w-4 mr-1" />
